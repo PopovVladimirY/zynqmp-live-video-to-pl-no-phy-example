@@ -1,7 +1,9 @@
 # Xilinx DP video example modified to enable Live Video output with no PHY connected.
 
 This project is derived from dpdma **standalone** driver example and modified to run with no Display Port PHY present.
-To make this example practical, the Live Video output of Display port shall be connected to something useful in FPGA. For instance, a custom LCD screen interface implemnted in VHDL or an HDMI/SDI TX IP. The VHDL design is outside of the scope of this exercise. Which is focusing on a smallest software setup required for using Display Port without PHY and delivering DP Live Video output to FPGA.
+To make this example practical, the Live Video output of Display port shall be connected to something useful in FPGA. For instance, a custom LCD screen interface implemnted in VHDL or an HDMI/SDI TX IP. The VHDL design is outside of the scope of this exercise. Which is focusing on a smallest software setup required for delivering DP Live Video output to FPGA in **NO_PHY** mode.
+
+>IMPORTANT: This example will need a modified BSP **dppsu** driver. See instructions below.
 
 ## Setting up
 
