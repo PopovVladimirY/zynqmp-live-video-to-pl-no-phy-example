@@ -30,7 +30,7 @@ Configuring BSP for DP example:
 1. Remove the video example source code files from **src** folder and clone this repository into it.
 2. Replace content of **psu_cortex53_0** folder inside the platform project with the modifed version. In the platform project, remove the content of **cortexa53_0** folder and clone following repository into it.
 
-    http://....../displayport-cortexa53-standalone
+    https://github.com/PopovVladimirY/zynqmp-display-port-no-phy-example.git
 
 Build example system project. It will compile the BSP as well and will create the boot package to use with J-TAG debugger.
 
