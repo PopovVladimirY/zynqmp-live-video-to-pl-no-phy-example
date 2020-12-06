@@ -43,6 +43,9 @@
 * ----- --- -------- -----------------------------------------------
 * 1.0	aad 10/19/17	Initial Release
 * 1.1   aad 02/22/18    Fixed the header
+* 2.0   vpo 01/12/20    Implementing Live Video output to FPGA support
+*                       with not PHY connected to Display Port. 
+*                       Fixing STRIDE calculation and DPDMA configuration.
 *</pre>
 *
 ******************************************************************************/
@@ -66,14 +69,22 @@
 #define AVBUF_BASEADDR		XPAR_PSU_DP_BASEADDR
 #define DPDMA_BASEADDR		XPAR_PSU_DPDMA_BASEADDR
 
-#define BUFFERSIZE			1920 * 1080 * 4		/* HTotal * VTotal * BPP */
-#define LINESIZE			1920 * 4			/* HTotal * BPP */
-#define STRIDE				LINESIZE			/* The stride value should
-													be aligned to 256*/
+#define FRAME_WIDTH			800 //1920
+#define FRAME_HEIGHT		480 //1080
+
+#define VSIZE			    (FRAME_HEIGHT)			/* HTotal * BPP */
+#define LINESIZE			(FRAME_WIDTH * 4)		/* HTotal * BPP for RGBA*/
+#define STRIDE				(((LINESIZE + 255) / 256) * 256) 	/* The stride value should be aligned to 256*/
+#define TOTALPIXEL			(LINESIZE * VSIZE)		/* HTotal * VTotal * BPP */
+#define BUFFERSIZE			(STRIDE * VSIZE)		/* HTotal * VTotal * BPP */
 
 /************************** Variable Declarations ***************************/
 u8 Frame[BUFFERSIZE] __attribute__ ((__aligned__(256)));
+u8 Frame2[BUFFERSIZE] __attribute__ ((__aligned__(256)));
 XDpDma_FrameBuffer FrameBuffer;
+XDpDma_FrameBuffer FrameBuffer2;
+
+u8 *DrawSquare(u8* Frame);
 
 /**************************** Type Definitions *******************************/
 
@@ -96,14 +107,58 @@ int main()
 	Xil_DCacheDisable();
 	Xil_ICacheDisable();
 
+	/*
+	 * Following lines are an example implementation of a custom LCD interface
+	 * module in FPGA which will be receiving the Live Video from Display Port.
+	*/
+#define CUSTOM_LCD
+#ifdef CUSTOM_LCD
+	/* Check FPGA version */
+	uint32_t ver = Xil_In32(0x80000000);
+	xil_printf("FPGA version: 0x%08X \r\n", ver);
+	/* Enable LCD */
+	Xil_Out32(0x8000C004, 0x111);
+#endif
+
 	xil_printf("DPDMA Generic Video Example Test \r\n");
+	xil_printf("Video : line = %d, stride = %d, frame = %d \r\n", LINESIZE, STRIDE, BUFFERSIZE);
+
 	Status = DpdmaVideoExample(&RunCfg);
 	if (Status != XST_SUCCESS) {
-			xil_printf("DPDMA Video Example Test Failed\r\n");
-			return XST_FAILURE;
+		xil_printf("DPDMA Video Example Test Failed\r\n");
+		return XST_FAILURE;
 	}
 
-	xil_printf("Successfully ran DPDMA Video Example Test\r\n");
+#ifdef NO_PHY
+	DpPsu_Run(&RunCfg);
+#endif
+
+	/*
+	*  IMPORTANT: The application shall not exit for the example to work
+	*  properly. 
+	*/
+
+	/*
+	 * Draw bouncing square using two frame buffers for flip-flop
+	 */
+	uint32_t cnt = 0;
+	while(1)
+	{
+		if (cnt & 1)
+		{
+			DrawSquare(Frame);
+			XDpDma_DisplayGfxFrameBuffer(RunCfg.DpDmaPtr, &FrameBuffer);
+		}
+		else
+		{
+			DrawSquare(Frame2);
+			XDpDma_DisplayGfxFrameBuffer(RunCfg.DpDmaPtr, &FrameBuffer2);
+		}
+
+		usleep(33333);
+
+		cnt++;
+	}
 
     return XST_SUCCESS;
 }
@@ -133,13 +188,19 @@ int DpdmaVideoExample(Run_Config *RunCfgPtr)
 	}
 
 	xil_printf("Generating Overlay.....\n\r");
-	GraphicsOverlay(Frame, RunCfgPtr);
+	GraphicsOverlay(Frame, RunCfgPtr, 0x0FF000FF, 0xF0FF0000);
+	GraphicsOverlay(Frame2, RunCfgPtr, 0xF0FF0000, 0x0FF000FF);
 
 	/* Populate the FrameBuffer structure with the frame attributes */
 	FrameBuffer.Address = (INTPTR)Frame;
 	FrameBuffer.Stride = STRIDE;
 	FrameBuffer.LineSize = LINESIZE;
-	FrameBuffer.Size = BUFFERSIZE;
+	FrameBuffer.Size = TOTALPIXEL;
+
+	FrameBuffer2.Address = (INTPTR)Frame2;
+	FrameBuffer2.Stride = STRIDE;
+	FrameBuffer2.LineSize = LINESIZE;
+	FrameBuffer2.Size = TOTALPIXEL;
 
 	SetupInterrupts(RunCfgPtr);
 
@@ -165,7 +226,8 @@ void InitRunConfig(Run_Config *RunCfgPtr)
 		RunCfgPtr->IntrPtr   = &Intr;
 		RunCfgPtr->AVBufPtr  = &AVBuf;
 		RunCfgPtr->DpDmaPtr  = &DpDma;
-		RunCfgPtr->VideoMode = XVIDC_VM_1920x1080_60_P;
+		RunCfgPtr->VideoMode = XVIDC_VM_800x480_60_P;
+//		RunCfgPtr->VideoMode = XVIDC_VM_1920x1080_60_P;
 		RunCfgPtr->Bpc		 = XVIDC_BPC_8;
 		RunCfgPtr->ColorEncode			= XDPPSU_CENC_RGB;
 		RunCfgPtr->UseMaxCfgCaps		= 1;
@@ -211,9 +273,11 @@ int InitDpDmaSubsystem(Run_Config *RunCfgPtr)
 
 	/* Initialize the DisplayPort TX core. */
 	Status = XDpPsu_InitializeTx(DpPsuPtr);
+#ifndef NO_PHY	
 	if (Status != XST_SUCCESS) {
 		return XST_FAILURE;
 	}
+#endif
 	/* Set the format graphics frame for DPDMA*/
 	Status = XDpDma_SetGraphicsFormat(DpDmaPtr, RGBA8888);
 	if (Status != XST_SUCCESS) {
@@ -235,8 +299,16 @@ int InitDpDmaSubsystem(Run_Config *RunCfgPtr)
 	 * Here in this example we are going to demonstrate
 	 * graphics overlay over the TPG video.
 	 */
-	XAVBuf_InputVideoSelect(AVBufPtr, XAVBUF_VIDSTREAM1_NONE,
+	XAVBuf_InputVideoSelect(AVBufPtr,
+
+	/* Select live video input option
+	 * XAVBUF_VIDSTREAM1_NONE
+	 * XAVBUF_VIDSTREAM1_LIVE
+	 * XAVBUF_VIDSTREAM1_TPG
+	*/
+							XAVBUF_VIDSTREAM1_TPG,
 							XAVBUF_VIDSTREAM2_NONLIVE_GFX);
+
 	/* Configure Video pipeline for graphics channel */
 	XAVBuf_ConfigureGraphicsPipeline(AVBufPtr);
 	/* Configure the output video pipeline */
@@ -247,7 +319,17 @@ int InitDpDmaSubsystem(Run_Config *RunCfgPtr)
 	XDpPsu_CfgMsaEnSynchClkMode(DpPsuPtr, RunCfgPtr->EnSynchClkMode);
 	/* Set the clock source depending on the use case.
 	 * Here for simplicity we are using PS clock as the source*/
+
+	/* Actual clock selection depends on how FPGA will treat Live Video.
+	 * Select correct option for your design.
+	 * Original example uses XAVBUF_PS_CLK for video and audio
+	*/
+#ifndef NO_PHY
 	XAVBuf_SetAudioVideoClkSrc(AVBufPtr, XAVBUF_PS_CLK, XAVBUF_PS_CLK);
+#else
+	XAVBuf_SetAudioVideoClkSrc(AVBufPtr, XAVBUF_PL_CLK, XAVBUF_PS_CLK);
+#endif	
+
 	/* Issue a soft reset after selecting the input clock sources */
 	XAVBuf_SoftReset(AVBufPtr);
 
@@ -331,7 +413,7 @@ void SetupInterrupts(Run_Config *RunCfgPtr)
 * @note		None.
 *
 *****************************************************************************/
-u8 *GraphicsOverlay(u8* Frame, Run_Config *RunCfgPtr)
+u8 *GraphicsOverlay(u8* Frame, Run_Config *RunCfgPtr, uint32_t color1, uint32_t color2)
 {
 	u64 Index;
 	u32 *RGBA;
@@ -341,14 +423,101 @@ u8 *GraphicsOverlay(u8* Frame, Run_Config *RunCfgPtr)
 		 * Alpha = 0x0F
 		 * */
 	for(Index = 0; Index < (BUFFERSIZE/4) /2; Index ++) {
-		RGBA[Index] = 0x0F0000FF;
-	}
-	for(; Index < BUFFERSIZE/4; Index ++) {
 		/*
 		 * Green at the bottom half
 		 * Alpha = 0xF0
 		 * */
-		RGBA[Index] = 0xF000FF00;
+		RGBA[Index] = color1;//0xF0FF0000;
 	}
+	for(; Index < BUFFERSIZE/4; Index ++) {
+		RGBA[Index] = color2;//0x0FF000FF;
+	}
+	return Frame;
+}
+
+u8 *DrawSquare(u8* Frame)
+{
+	static int32_t x = 0;
+	static int32_t y = 0;
+	static int32_t w = 80;
+	static int32_t h = 80;
+	static uint32_t color = 0x00FFFFFF;
+	static uint32_t alpha = 0x80;
+	static uint32_t ca = 1;
+
+	static int32_t cx = 3;
+	static int32_t cy = 5;
+
+	static int32_t sx = LINESIZE / 4;
+	static int32_t sy = VSIZE;
+
+	//
+	u32 *RGBA = (u32 *) Frame;
+
+	// Alpha 0.
+
+	uint32_t clr = (color & 0xFFFFFF) | (alpha << 24);
+
+	color++;
+
+	alpha += ca;
+
+	if (alpha == 0xFF || alpha == 0x80)
+	{
+		ca = -ca;
+	}
+
+	memset(RGBA, 0, BUFFERSIZE);
+
+	u32* ptr = RGBA + x + y*STRIDE/4;
+	for (int i = 0; i < h; i++)
+	{
+		for (int j = 0; j < w; j++)
+		{
+			*ptr = clr;
+			ptr++;
+		}
+		ptr += STRIDE/4 - w;
+	}
+
+
+	// update position for the next frame
+	if (cx > 0)
+	{
+		// check right boundary
+		if (x + w + cx > sx - 1)
+		{
+			cx = -cx;
+		}
+	}
+	else
+	{
+		// check left boundary
+		if (x + cx < 0)
+		{
+			cx = -cx;
+		}
+	}
+
+	if (cy > 0)
+	{
+		// check bottom boundary
+		if (y + h + cy > sy - 1)
+		{
+			cy = -cy;
+		}
+	}
+	else
+	{
+		// check top boundary
+		if (y + cy < 0)
+		{
+			cy = -cy;
+		}
+	}
+
+	x += cx;
+	y += cy;
+
 	return Frame;
 }

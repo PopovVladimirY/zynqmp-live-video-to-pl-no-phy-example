@@ -44,6 +44,9 @@
 * ----- --- -------- -----------------------------------------------
 * 1.0	aad 10/19/17	Initial Release
 * 1.1   aad 02/22/18    Fixed the header
+* 2.0   vpo 01/12/20    Implementing Live Video output to FPGA support
+*                       with not PHY connected to Display Port. 
+*                       Fixing STRIDE calculation and DPDMA configuration.
 *</pre>
 *
 ******************************************************************************/
@@ -137,7 +140,7 @@ static u32 DpPsu_Hpd_Train(Run_Config *RunCfgPtr)
 
 	xil_printf("Lane count =\t%d\n\r", DpPsuPtr->LinkConfig.LaneCount);
 	xil_printf("Link rate =\t%d\n\r",  DpPsuPtr->LinkConfig.LinkRate);
-
+#ifndef NO_PHY
 	// Link training sequence is done
         xil_printf("\n\r\rStarting Training...\n\r");
 	Status = XDpPsu_EstablishLink(DpPsuPtr);
@@ -145,7 +148,7 @@ static u32 DpPsu_Hpd_Train(Run_Config *RunCfgPtr)
 		xil_printf("\t! Training succeeded.\n\r");
 	else
 		xil_printf("\t! Training failed.\n\r");
-
+#endif
 	return Status;
 }
 
@@ -169,7 +172,7 @@ void DpPsu_Run(Run_Config *RunCfgPtr)
 	XDpPsu  *DpPsuPtr = RunCfgPtr->DpPsuPtr;
 
 	XDpPsu_EnableMainLink(DpPsuPtr, 0);
-
+#ifndef NO_PHY
 	if (!XDpPsu_IsConnected(DpPsuPtr)) {
 		XDpDma_SetChannelState(RunCfgPtr->DpDmaPtr, GraphicsChan,
 				       XDPDMA_DISABLE);
@@ -185,7 +188,7 @@ void DpPsu_Run(Run_Config *RunCfgPtr)
 		xil_printf("! Wakeup failed.\n\r");
 		return;
 	}
-
+#endif
 
 	u8 Count = 0;
 	do {
@@ -193,25 +196,28 @@ void DpPsu_Run(Run_Config *RunCfgPtr)
 		Count++;
 
 		Status = DpPsu_Hpd_Train(RunCfgPtr);
+#ifndef NO_PHY
 		if (Status == XST_DEVICE_NOT_FOUND) {
 			xil_printf("Lost connection\n\r");
 			return;
 		}
 		else if (Status != XST_SUCCESS)
 			continue;
-
+#endif
 		Status = InitDpDmaSubsystem(RunCfgPtr);
 		if (Status != XST_SUCCESS)
-			return XST_FAILURE;
+			return;
 
 		XDpDma_DisplayGfxFrameBuffer(RunCfgPtr->DpDmaPtr, &FrameBuffer);
 
 		DpPsu_SetupVideoStream(RunCfgPtr);
 		XDpPsu_EnableMainLink(DpPsuPtr, 1);
 
-		Status = XDpPsu_CheckLinkStatus(DpPsuPtr, DpPsuPtr->LinkConfig.LaneCount);
+#ifndef NO_PHY
+		XDpPsu_CheckLinkStatus(DpPsuPtr, DpPsuPtr->LinkConfig.LaneCount);
 		if (Status == XST_DEVICE_NOT_FOUND)
 			return;
+#endif			
 	} while ((Status != XST_SUCCESS) && (Count < 2));
 }
 
@@ -253,6 +259,7 @@ void DpPsu_IsrHpdEvent(void *ref)
 *******************************************************************************/
 void DpPsu_IsrHpdPulse(void *ref)
 {
+#ifndef NO_PHY
 	u32 Status;
 	XDpPsu *DpPsuPtr = ((Run_Config *)ref)->DpPsuPtr;
 	xil_printf("HPD pulse ..........\n\r");
@@ -291,6 +298,7 @@ void DpPsu_IsrHpdPulse(void *ref)
 	} while ((Status != XST_SUCCESS) && (Count < 2));
 
 	xil_printf(".......... HPD pulse\n\r");
+#endif
 }
 /******************************************************************************/
 /**

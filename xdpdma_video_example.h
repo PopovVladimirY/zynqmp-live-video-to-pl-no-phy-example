@@ -59,6 +59,12 @@
 #include "xavbuf.h"    		/* AVBUF is the video pipeline driver */
 #include "xavbuf_clk.h"		/* Clock Driver for Video(VPLL) and Audio(RPLL) clocks */
 
+/*
+ * This define is for Display Port implementation with no PHY connected
+ * to use Live Video output to FPGA only
+ */
+#define NO_PHY
+
 /****************************** Type Definitions ******************************/
 
 typedef enum {
@@ -97,7 +103,7 @@ int DpdmaVideoExample(Run_Config *RunCfgPtr);
 void InitRunConfig(Run_Config *RunCfgPtr);
 int InitDpDmaSubsystem(Run_Config *RunCfgPtr);
 void SetupInterrupts(Run_Config *RunCfgPtr);
-u8* GraphicsOverlay(u8* Frame, Run_Config *RunCfgPtr);
+u8* GraphicsOverlay(u8* Frame, Run_Config *RunCfgPtr, uint32_t color1, uint32_t color2);
 
 /* DisplayPort interrupt related functions */
 void DpPsu_SetupVideoStream(Run_Config *RunCfgPtr);
